@@ -391,7 +391,13 @@ def dag_to_pipeline(pipeline, dbsession, workflow_label=None, **kwargs):
         task_template = {
             "name": task.name,  # 因为同一个
             "outputs": {
-                "artifacts": []
+                "artifacts": [
+                    {
+                        "name": "metric",
+                        "path": "/metric",
+                        "optional": True
+                    }
+                ]
             },
             "container": {
                 "name": task.name + "-" + uuid.uuid4().hex[:4],

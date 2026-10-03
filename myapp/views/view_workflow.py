@@ -1,6 +1,9 @@
+import base64
 import copy
 import os
 import re
+import tarfile
+import tempfile
 import time
 import traceback
 
@@ -563,6 +566,156 @@ class Workflow_ModelView_Base():
             content = ansi_escape.sub('', content)
         return content
 
+    def parse_metric_tgz(self, metric_key):
+        """从 minio 下载 metric.tgz 到临时目录并解压，返回目录路径（保留所有文件含图片）"""
+        tmp_dir = tempfile.mkdtemp(prefix='metric_')
+        tgz_path = os.path.join(tmp_dir, 'metric.tgz')
+        try:
+            from minio import Minio
+            minioClient = Minio(
+                endpoint=conf.get('MINIO_HOST', 'minio.kubeflow:9000'),
+                access_key='minio',
+                secret_key='minio123',
+                secure=False
+            )
+            minioClient.fget_object('mlpipeline', metric_key, tgz_path)
+            with tarfile.open(tgz_path, 'r:gz') as tar:
+                tar.extractall(tmp_dir)
+            return tmp_dir
+        except Exception as e:
+            print(e)
+            return None
+
+    def resolve_metric_path(self, metric_dir, p):
+        """把 metric.json 里写的路径（/metric/xxx.png 或 xxx.png）映射到解压后的临时目录，
+        兼容 Argo 归档目录时 tar 包带/不带 metric/ 前缀两种情况"""
+        p = p.strip().lstrip('/')
+        candidates = [os.path.join(metric_dir, p)]
+        if p.startswith('metric/'):
+            candidates.append(os.path.join(metric_dir, p[len('metric/'):]))
+        else:
+            candidates.append(os.path.join(metric_dir, 'metric', p))
+        candidates.append(os.path.join(metric_dir, os.path.basename(p)))
+        for c in candidates:
+            if os.path.exists(c):
+                return c
+        # 递归兜底：按文件名在解压目录下查找
+        basename = os.path.basename(p)
+        for root, dirs, files in os.walk(metric_dir):
+            if basename in files:
+                return os.path.join(root, basename)
+        return candidates[0]
+
+    def image_to_base64(self, img_path):
+        """读取图片文件，转成 <img> 能直接用的 data URL"""
+        ext = os.path.splitext(img_path)[1].lower().lstrip('.')
+        mime = 'png' if ext == 'png' else ('jpeg' if ext in ('jpg', 'jpeg') else ext)
+        with open(img_path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode('utf-8')
+        return f'data:image/{mime};base64,{b64}'
+
+    def csv_to_html(self, csv_path):
+        """用 pandas 读 CSV，转成 HTML 表格（前端 type='html' 直接展示）"""
+        df = pandas.read_csv(csv_path)
+        return df.to_html(index=False, border=1, classes='dataframe', justify='center')
+
+    def build_metric_tab7(self, metric_key, tab7):
+        """解析 metric.tgz，按 metric_type 分派填充 tab7。有 metric 返回 True，否则 False"""
+        if not metric_key:
+            return False
+
+        metric_dir = self.parse_metric_tgz(metric_key)
+        if not metric_dir:
+            return False
+
+        # 读 metric.json：兼容根目录 / metric 子目录 / 递归查找
+        metric_json_path = os.path.join(metric_dir, 'metric.json')
+        if not os.path.exists(metric_json_path):
+            metric_json_path = os.path.join(metric_dir, 'metric', 'metric.json')
+        if not os.path.exists(metric_json_path):
+            found = None
+            for root, dirs, files in os.walk(metric_dir):
+                if 'metric.json' in files:
+                    found = os.path.join(root, 'metric.json')
+                    break
+            metric_json_path = found
+        if not metric_json_path or not os.path.exists(metric_json_path):
+            return False
+
+        try:
+            metrics = json.load(open(metric_json_path, encoding='utf-8'))
+            if isinstance(metrics, dict):
+                metrics = [metrics]
+        except Exception as e:
+            print(e)
+            return False
+
+        for metric in metrics:
+            t = metric.get('metric_type', '')
+            describe = metric.get('describe', '')
+
+            # 1. text：直接文本
+            if t == 'text':
+                tab7[0]['content'].append({
+                    "groupName": describe,
+                    "groupContent": {"value": metric.get('text', ''), "type": 'text'}
+                })
+
+            # 2. image：图片转 base64，用 <img> 展示
+            elif t == 'image':
+                img_path = self.resolve_metric_path(metric_dir, metric.get('image', ''))
+                if os.path.exists(img_path):
+                    img_url = self.image_to_base64(img_path)
+                    html = f'<div style="text-align:center"><img src="{img_url}" style="max-width:100%"></div>'
+                    tab7[0]['content'].append({
+                        "groupName": describe,
+                        "groupContent": {"value": html, "type": 'html'}
+                    })
+
+            # 3. table：CSV 转 HTML 表格
+            elif t == 'table':
+                csv_path = self.resolve_metric_path(metric_dir, metric.get('file_path', ''))
+                if os.path.exists(csv_path):
+                    try:
+                        html = self.csv_to_html(csv_path)
+                        tab7[0]['content'].append({
+                            "groupName": describe,
+                            "groupContent": {"value": html, "type": 'html'}
+                        })
+                    except Exception as e:
+                        print(e)
+
+            # 4. iframe：直接嵌入 url（前端取 value.url）
+            elif t == 'iframe':
+                tab7[0]['content'].append({
+                    "groupName": describe,
+                    "groupContent": {"value": {"url": metric.get('url', '')}, "type": 'iframe'}
+                })
+
+            # 5. echart-*：读 CSV/JSON，用 py_echart.draw 转 ECharts option
+            elif t.startswith('echart-'):
+                chart_type = t.replace('echart-', '')
+                data_path = self.resolve_metric_path(metric_dir, metric.get('file_path', ''))
+                if os.path.exists(data_path):
+                    try:
+                        from myapp.utils import py_echart
+                        option = py_echart.draw(chart_type, data_path)
+                        if not option:
+                            continue
+                        option_str = option if isinstance(option, str) else json.dumps(option, ensure_ascii=False, default=str)
+                        tab7[0]['content'].append({
+                            "groupName": describe,
+                            "groupContent": {"value": option_str, "type": 'echart'}
+                        })
+                    except Exception as e:
+                        print(e)
+                        tab7[0]['content'].append({
+                            "groupName": describe,
+                            "groupContent": {"value": str(e), "type": 'text'}
+                        })
+
+        return True
+
     @expose_api(description="任务实例的信息",url="/web/node_detail/<cluster_name>/<namespace>/<workflow_name>/<node_name>", methods=["GET", ])
     # @pysnooper.snoop()
     def web_node_detail(self,cluster_name,namespace,workflow_name,node_name):
@@ -640,16 +793,6 @@ class Workflow_ModelView_Base():
         labels = json.loads(workflow.get('labels', "{}"))
         pipeline_name = labels.get('pipeline-name', workflow_name)
         bind_pod_url = f'/k8s/web/search/{cluster_name}/{namespace}/{pipeline_name}'
-
-        echart_option = ''
-        metric_content = ''
-        try:
-            if node_detail_config['metric_key']:
-                metric_content = self.get_minio_content(node_detail_config['metric_key'],decompress=True)
-                # print(metric_content)
-                metric_content = metric_content
-        except Exception as e:
-            print(e)
 
         message = node_detail_config.get('message', '')
         node_type = node_detail_config.get('node_type', '')
@@ -753,43 +896,29 @@ class Workflow_ModelView_Base():
             }
         ]
 
-        tip = __("提示：仅商业版支持任务结果、模型指标、数据集可视化预览")
         tab7 = [
             {
                 "tabName": __("结果可视化"),
-                "content": [
-                    {
-                        "groupName": "",
-                        "groupContent": {
-                            "value": Markup(tip),
-                            # options的值
-                            "type": 'html'
-                        }
-                    },
-
-                ],
+                "content": [],
                 "bottomButton": []
             },
         ]
-        if not metric_content:
+        # 优先解析真实 metric；没有 metric 时才展示示例图表
+        if not self.build_metric_tab7(node_detail_config.get('metric_key'), tab7):
             echart_demos_file = os.listdir('myapp/utils/echart/')
             for file in echart_demos_file:
-                # print(file)
-                file_path = os.path.join('myapp/utils/echart/',file)
+                file_path = os.path.join('myapp/utils/echart/', file)
                 can = ['area-stack.json', 'rose.json', 'mix-line-bar.json', 'pie-nest.json', 'bar-stack.json',
                        'candlestick-simple.json', 'graph-simple.json', 'tree-polyline.json', 'sankey-simple.json',
                        'radar.json', 'sunburst-visualMap.json', 'parallel-aqi.json', 'funnel.json',
-                       'sunburst-visualMap.json', 'scatter-effect.json','multiple-lines.json']
-                not_can = ['bar3d-punch-card.json', 'simple-surface.json']# 不行的。
-
+                       'sunburst-visualMap.json', 'scatter-effect.json', 'multiple-lines.json']
                 if file.endswith('.json') and file in can:
                     echart_option = ''.join(open(file_path).readlines())
-                    # print(echart_option)
                     tab7[0]['content'].append(
                         {
-                            "groupName": __("任务结果示例：")+file.replace('.json','')+__("类型图表"),
+                            "groupName": __("任务结果示例：") + file.replace('.json', '') + __("类型图表"),
                             "groupContent": {
-                                "value": echart_option,  # options的值
+                                "value": echart_option,
                                 "type": 'echart'
                             }
                         }

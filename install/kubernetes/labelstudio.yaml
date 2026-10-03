@@ -1,0 +1,142 @@
+# =============================================================================
+# Label Studio 部署（namespace=kubeflow，与 istio VS 的 destination 保持一致）
+# =============================================================================
+# 前置：
+# 1. 镜像含 SSO 代码改动，推送到 ccr.ccs.tencentyun.com/cube-studio/label-studio:sso-v1
+#    若仓库需要认证，请在 Deployment 里补 imagePullSecrets
+# 2. 主平台 istio VS（virtual.yaml 里 kubeflow-labelstudio）已指向
+#    labelstudio.kubeflow.svc.cluster.local，无需改动
+# 3. 单副本 + SQLite，replicas=1
+# 4. HOST / CSRF_TRUSTED_ORIGINS 按各环境对外域名替换
+# 5. 用户数据直接挂 kubeflow namespace 下已有的 kubeflow-user-workspace PVC（只读）
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: labelstudio-env
+  namespace: kubeflow
+data:
+  SSO_COOKIE_LOGIN_ENABLED: "1"
+  SSO_COOKIE_NAME: "myapp_username"
+  SSO_EMAIL_DOMAIN: "sso.local"
+  SSO_COOKIE_SKIP_VALUE: "myapp"
+  HOST: "http://<平台对外域名>/labelstudio"
+  CSRF_TRUSTED_ORIGINS: "http://<平台对外域名>"
+  FORCE_SCRIPT_NAME: "/labelstudio"
+  LOCAL_FILES_DOCUMENT_ROOT: "/mnt"
+  LOCAL_FILES_SERVING_ENABLED: "true"
+---
+# -----------------------------------------------------------------------------
+# LS 自身数据：静态 PV（hostPath）+ PVC
+# 目录 /data/k8s/kubeflow/labelstudio 已由 init_node.sh:18 创建并 chmod 777
+# PV 是集群级资源，PVC 放 kubeflow namespace 绑定即可
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kubeflow-label-studio-data
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/k8s/kubeflow/labelstudio
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: label-studio-data
+  namespace: kubeflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: kubeflow-label-studio-data
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: labelstudio
+  namespace: kubeflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: labelstudio
+  template:
+    metadata:
+      labels:
+        app: labelstudio
+    spec:
+      securityContext:
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: labelstudio
+          image: ccr.ccs.tencentyun.com/cube-studio/label-studio:sso-v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: labelstudio-env
+          volumeMounts:
+            - name: data
+              mountPath: /label-studio/data
+            - name: user-workspace
+              mountPath: /mnt
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: label-studio-data
+        # 主平台用户数据：直接挂 kubeflow namespace 下已有的 PVC（只读）
+        - name: user-workspace
+          persistentVolumeClaim:
+            claimName: kubeflow-user-workspace
+            readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: labelstudio
+  namespace: kubeflow
+spec:
+  selector:
+    app: labelstudio
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

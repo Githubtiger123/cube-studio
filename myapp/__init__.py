@@ -293,19 +293,21 @@ def check_login():
 # 添加每次请求后的操作函数，必须要返回res
 @app.after_request
 def myapp_after_request(resp):
+    cookie_domain = conf.get('COOKIE_DOMAIN', None) or None
     try:
         if g.user and hasattr(g.user,'username') and g.user.username:
 
-            resp.set_cookie('myapp_username', g.user.username,domain=conf.get('COOKIE_DOMAIN',None) if conf.get('COOKIE_DOMAIN',None) else None)  # 设置用户信息传递
+            resp.set_cookie('myapp_username', g.user.username, domain=cookie_domain)  # 设置用户信息传递
             # resp.set_cookie('myapp_username', g.user.username)  # 设置用户信息传递
 
             if hasattr(g, 'id'):
                 resp.set_cookie('id', str(g.id), max_age=3)  # 设置有效期
-
+        else:
+            # 无登录用户（退出/未登录/被停用）→ 清除 cookie，避免脏数据残留
+            resp.delete_cookie('myapp_username', domain=cookie_domain, path='/')
     except Exception as e:
         print(e)
-        resp.set_cookie('myapp_username', 'myapp')
-        # resp.delete_cookie('id')
+        resp.delete_cookie('myapp_username', domain=cookie_domain, path='/')
     return resp
 
 

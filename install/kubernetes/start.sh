@@ -134,6 +134,9 @@ kubectl create -f pv-pvc-jupyter.yaml
 kubectl create -f pv-pvc-automl.yaml
 kubectl create -f pv-pvc-pipeline.yaml
 kubectl create -f pv-pvc-service.yaml
+kubectl create -f pv-pvc-kubeflow.yaml
+# 部署标注平台 label studio
+kubectl apply -f labelstudio.yaml
 
 # 替换配置文件config.py中的内网ip地址
 sed -i "s/SERVICE_EXTERNAL_IP=\\[\\]/SERVICE_EXTERNAL_IP=\[\"$1\"\]/g" cube/overlays/config/config.py

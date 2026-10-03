@@ -83,8 +83,6 @@ spec:
       headers:
         cookie:
           regex: ".*myapp_username=.*"
-    rewrite:
-      uri: /labelstudio/
     route:
     - destination:
         host: labelstudio.kubeflow.svc.cluster.local

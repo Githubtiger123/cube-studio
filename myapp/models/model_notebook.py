@@ -174,8 +174,12 @@ class Notebook(Model,AuditMixinNullable,MyappModelBase):
         return Markup(f'<a href="/notebook_modelview/api/reset/{self.id}">reset</a>')
 
 
-    # 镜像保存
+    # 镜像保存时间
     @property
     def save(self):
-        return Markup(f'<span style="color:red;">环境保存(商业版)</span>')
+        expand = json.loads(self.expand) if self.expand else {}
+        save_time = expand.get('save_success_last_time', '')
+        if save_time:
+            return Markup(f'<span>{save_time}</span>')
+        return Markup(f'<span style="color:gray;">{__("未保存")}</span>')
 

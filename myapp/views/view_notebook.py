@@ -876,6 +876,106 @@ class Notebook_ModelView_Base():
     def muldelete(self, items):
         return self._muldelete(items)
 
+    @event_logger.log_this
+    @action("save_image", "保存镜像", "确定保存该notebook环境为镜像并推送到仓库?", "fa-save", single=True, multiple=False)
+    def save_image(self, items):
+        if not items:
+            abort(404)
+        item = items[0]
+        from myapp.utils.py.py_k8s import K8s
+        k8s_client = K8s(item.cluster.get('KUBECONFIG', ''))
+        namespace = item.namespace
+        pod_name = item.name
+
+        # 读取运行中的notebook pod，取node_name和container_id
+        pod = None
+        try:
+            pod = k8s_client.v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+        except Exception as e:
+            pass
+        node_name = ''
+        container_id = ''
+        if pod:
+            node_name = pod.spec.node_name
+            containers = [container for container in pod.status.container_statuses if container.name == pod_name]
+            if containers:
+                container_id = containers[0].container_id.replace('docker://', '').replace('containerd://', '')
+
+        if not node_name or not container_id:
+            flash(__('没有发现正在运行的notebook，请先启动notebook，安装环境后，再保存生成新镜像'), 'warning')
+            return redirect(self.get_redirect())
+
+        # 生成目标镜像：PUSH_REPOSITORY_ORG + username + : + notebook名称 + 时间戳
+        tag = f"{item.name}.{datetime.datetime.now().strftime('%Y.%m.%d.%H%M%S')}"
+        # 镜像tag最长128字符，过长则截取前缀保留后边（保留时间戳保证唯一）
+        if len(tag) > 128:
+            tag = tag[-128:]
+        target_image = conf.get('PUSH_REPOSITORY_ORG', 'ccr.ccs.tencentyun.com/cube-studio/') + item.created_by.username + ":" + tag
+
+        # 匹配镜像仓库，拼接login + commit + push命令
+        commit_pod_name = "notebook-commit-%s-%s" % (item.created_by.username, str(item.id))
+        login_command = ''
+        all_repositorys = db.session.query(Repository).all()
+        all_repositorys = [repo for repo in all_repositorys if repo.server in target_image]
+        if not all_repositorys:
+            flash(__('构建推送镜像前，请先添加镜像仓库信息') + target_image[:target_image.index('/')], 'warning')
+            return redirect(conf.get('MODEL_URLS', {}).get('repository'))
+        repo = max(all_repositorys, key=lambda repo: len(repo.server) + 1000 * int(repo.created_by.username == g.user.username))
+        cli = item.cluster['CONTAINER_CLI']
+
+        if repo:
+            server = repo.server[:repo.server.index('/')] if '/' in repo.server else repo.server
+            login_command = f'{cli} login --username {repo.user} --password {repo.password} {server}'
+
+        if cli == 'nerdctl':
+            cli = 'nerdctl --namespace k8s.io'
+        if login_command:
+            command = ['sh', '-c', f'{login_command} && {cli} commit {container_id} {target_image} && {cli} push {target_image}']
+        else:
+            command = ['sh', '-c', f'{cli} commit {container_id} {target_image} && {cli} push {target_image}']
+
+        host_aliases = conf.get('HOSTALIASES')
+
+        image_pull_secrets = conf.get('HUBSECRET', [])
+        user_repositorys = db.session.query(Repository).filter(Repository.created_by_fk == g.user.id).all()
+        image_pull_secrets = list(set(image_pull_secrets + [rep.hubsecret for rep in user_repositorys]))
+
+        k8s_client.create_debug_pod(
+            namespace=namespace,
+            name=commit_pod_name,
+            command=command,
+            labels={"app": "docker", "user": g.user.username, "pod-type": "docker"},
+            annotations={'project': item.project.name},
+            args=None,
+            volume_mount=item.cluster['DOCKER_SOCKET'] if 'docker' in cli else item.cluster['CONTAINERD_SOCKET'],
+            working_dir='/mnt/%s' % item.created_by.username,
+            node_selector=None,
+            resource_memory='0~10G',
+            resource_cpu='0~10',
+            resource_gpu='0',
+            image_pull_policy='IfNotPresent',
+            image_pull_secrets=image_pull_secrets,
+            image=conf.get('NERDCTL_IMAGES', f'{cli}:xx') if cli != 'docker' else conf.get('DOCKER_IMAGES', f'{cli}:xx'),
+            hostAliases=host_aliases,
+            env={
+                "USERNAME": item.created_by.username
+            },
+            privileged=True,
+            accounts=None,
+            username=item.created_by.username,
+            node_name=node_name
+        )
+
+        # 发起异步任务检查commit pod是否完成，如果完成，更新notebook.images
+        from myapp.tasks.async_task import check_notebook_commit
+        kwargs = {
+            "notebook_id": item.id,
+            "target_image": target_image
+        }
+        check_notebook_commit.apply_async(kwargs=kwargs)
+
+        return redirect("/k8s/web/log/%s/%s/%s" % (item.cluster.get('NAME', ''), namespace, commit_pod_name))
+
 # 添加api
 class Notebook_ModelView_Api(Notebook_ModelView_Base, MyappModelRestApi):
     datamodel = SQLAInterface(Notebook)

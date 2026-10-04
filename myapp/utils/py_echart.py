@@ -381,15 +381,29 @@ def draw_tree(data):
 
 
 def draw_sunburst(data):
+    # sunburst 依赖节点的 value 决定扇区大小，叶子节点没有 value 会导致渲染空白，这里自动补默认值
+    def ensure_value(node):
+        children = node.get('children')
+        if children:
+            node['children'] = [ensure_value(c) for c in children]
+            node['value'] = sum(c.get('value', 0) for c in node['children'])
+        else:
+            if 'value' not in node:
+                node['value'] = 1
+        return node
+    data = ensure_value(data)
+
     options = {
-        "series": {
-            "type": 'sunburst',
-            "data": [data],
-            "radius": [0, '90%'],
-            "label": {
-                "rotate": 'radial'
+        "series": [
+            {
+                "type": 'sunburst',
+                "data": [data],
+                "radius": [0, '90%'],
+                "label": {
+                    "rotate": 'radial'
+                }
             }
-        }
+        ]
     }
     options = json.dumps(options, indent=4, ensure_ascii=False)
     print(options)

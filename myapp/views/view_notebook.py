@@ -877,11 +877,8 @@ class Notebook_ModelView_Base():
         return self._muldelete(items)
 
     @event_logger.log_this
-    @action("save_image", "保存镜像", "确定保存该notebook环境为镜像并推送到仓库?", "fa-save", single=True, multiple=False)
-    def save_image(self, items):
-        if not items:
-            abort(404)
-        item = items[0]
+    @action("save_image", "保存镜像", "确定保存该notebook环境为镜像并推送到仓库?", "url", single=True, multiple=False)
+    def save_image(self, item):
         from myapp.utils.py.py_k8s import K8s
         k8s_client = K8s(item.cluster.get('KUBECONFIG', ''))
         namespace = item.namespace
@@ -903,7 +900,7 @@ class Notebook_ModelView_Base():
 
         if not node_name or not container_id:
             flash(__('没有发现正在运行的notebook，请先启动notebook，安装环境后，再保存生成新镜像'), 'warning')
-            return redirect(self.get_redirect())
+            return redirect(conf.get('MODEL_URLS', {}).get('notebook', '/'))
 
         # 生成目标镜像：PUSH_REPOSITORY_ORG + username + : + notebook名称 + 时间戳
         tag = f"{item.name}.{datetime.datetime.now().strftime('%Y.%m.%d.%H%M%S')}"

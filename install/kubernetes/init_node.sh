@@ -18,6 +18,10 @@ mkdir -p /data/k8s/kubeflow/pipeline/workspace /data/k8s/kubeflow/pipeline/archi
 mkdir -p /data/k8s/monitoring/grafana/ /data/k8s/monitoring/prometheus/ /data/k8s/kubeflow/labelstudio/
 chmod -R 777 /data/k8s/monitoring/grafana/ /data/k8s/monitoring/prometheus/ /data/k8s/kubeflow/labelstudio/
 
+# 适配label studio
+sudo chgrp -R 1001 /data/k8s/kubeflow/pipeline/workspace/
+sudo chmod -R g+ws /data/k8s/kubeflow/pipeline/workspace/
+
 # 关闭swap分区
 swapoff -a
 # 拉取镜像

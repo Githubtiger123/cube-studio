@@ -679,9 +679,9 @@ SERVICE_PIPELINE_JAEGER='tracing.service'
 HUBSECRET = ['hubsecret']
 
 # 私有仓库的组织名，如果完全内网环境，修改为自己的内网
-REPOSITORY_ORG='ccr.ccs.tencentyun.com/cube-studio/'
+REPOSITORY_ORG='crpi-mctg1j954m4bry6c.cn-qingdao.personal.cr.aliyuncs.com/tiger-dev/'
 # 私有仓库的组织名，用户在线构建的镜像自动推送这个组织下面
-PUSH_REPOSITORY_ORG='ccr.ccs.tencentyun.com/cube-studio/'
+PUSH_REPOSITORY_ORG='crpi-mctg1j954m4bry6c.cn-qingdao.personal.cr.aliyuncs.com/tiger-dev/'
 
 # 用户常用默认镜像
 USER_IMAGE = 'ccr.ccs.tencentyun.com/cube-studio/ubuntu-gpu:cuda11.8.0-cudnn8-python3.9'
@@ -751,7 +751,7 @@ HOSTALIASES='''
 127.0.0.1 localhost
 '''
 # 默认服务代理的ip
-SERVICE_EXTERNAL_IP=[]    # ['内网ip']或者['内网ip|公网ip']
+SERVICE_EXTERNAL_IP=['10.60.137.68|117.50.173.5']    # ['内网ip']或者['内网ip|公网ip']
 
 # 链接菜单
 ALL_LINKS=[

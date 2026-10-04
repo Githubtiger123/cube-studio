@@ -21,8 +21,8 @@ data:
   SSO_COOKIE_NAME: "myapp_username"
   SSO_EMAIL_DOMAIN: "sso.local"
   SSO_COOKIE_SKIP_VALUE: "myapp"
-  HOST: "http://<平台对外域名>/labelstudio"
-  CSRF_TRUSTED_ORIGINS: "http://<平台对外域名>"
+  HOST: "http://117.50.173.5/labelstudio"
+  CSRF_TRUSTED_ORIGINS: "http://117.50.173.5"
   FORCE_SCRIPT_NAME: "/labelstudio"
   LOCAL_FILES_DOCUMENT_ROOT: "/mnt"
   LOCAL_FILES_SERVING_ENABLED: "true"
@@ -80,7 +80,7 @@ spec:
         fsGroup: 1001
       containers:
         - name: labelstudio
-          image: ccr.ccs.tencentyun.com/cube-studio/label-studio:sso-v1
+          image: crpi-mctg1j954m4bry6c.cn-qingdao.personal.cr.aliyuncs.com/tiger-dev/label-studio:sso-v1.2
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -93,7 +93,7 @@ spec:
               mountPath: /label-studio/data
             - name: user-workspace
               mountPath: /mnt
-              readOnly: true
+              # readOnly: true
           livenessProbe:
             httpGet:
               path: /health/
@@ -125,7 +125,7 @@ spec:
         - name: user-workspace
           persistentVolumeClaim:
             claimName: kubeflow-user-workspace
-            readOnly: true
+            # readOnly: true
 ---
 apiVersion: v1
 kind: Service

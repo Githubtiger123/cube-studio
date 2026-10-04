@@ -35,8 +35,8 @@ resources:
 
 images:
 - name: ccr.ccs.tencentyun.com/cube-studio/kubeflow-dashboard
-  newName: ccr.ccs.tencentyun.com/cube-studio/kubeflow-dashboard
-  newTag: 2026.06.01
+  newName: crpi-mctg1j954m4bry6c.cn-qingdao.personal.cr.aliyuncs.com/tiger-dev/kubeflow-dashboard
+  newTag: "202610043"
 - name: ccr.ccs.tencentyun.com/cube-studio/kubeflow-dashboard-frontend
   newName: ccr.ccs.tencentyun.com/cube-studio/kubeflow-dashboard-frontend
   newTag: 2026.06.01

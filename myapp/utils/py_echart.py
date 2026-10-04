@@ -341,7 +341,7 @@ def draw_tree(data):
 
     options = {
         "tooltip": {
-            "trigger": 'axis'
+            "trigger": 'item'
         },
         "toolbox": {
             "feature": {
@@ -384,7 +384,7 @@ def draw_sunburst(data):
     options = {
         "series": {
             "type": 'sunburst',
-            "data": data,
+            "data": [data],
             "radius": [0, '90%'],
             "label": {
                 "rotate": 'radial'
